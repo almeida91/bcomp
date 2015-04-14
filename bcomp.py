@@ -1,3 +1,24 @@
+# Copyright (C) 2015 Igor de Almeida
+#
+# Permission is hereby granted, free of charge, to any person
+# obtaining a copy of this software and associated documentation
+# files (the "Software"), to deal in the Software without
+# restriction, including without limitation the rights to use,
+# copy, modify, merge, publish, distribute, sublicense, and/or
+# sell copies of the Software, and to permit persons to whom the
+# Software is furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included
+# in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+# OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
 from pyparsing import *
 
 
@@ -102,7 +123,7 @@ class Parser(object):
 
         arguments = delimitedList(expression)
         function_call = (
-        (identifier('name') + FollowedBy('(')) + lpar + Optional(arguments)('args') + rpar).setParseAction(
+            (identifier('name') + FollowedBy('(')) + lpar + Optional(arguments)('args') + rpar).setParseAction(
             self.function_call_action)
 
         precendence = [
@@ -116,7 +137,8 @@ class Parser(object):
             self.expression_action)
 
         assignment = Forward()
-        assignment << (identifier + Word('=').suppress() + (expression | assignment)('value')).setParseAction(self.assignment_action)
+        assignment << (identifier + Word('=').suppress() + (expression | assignment)('value')).setParseAction(
+            self.assignment_action)
 
         # statements
         return_statement = (Keyword('return').suppress() + expression + Suppress(';')).setParseAction(
@@ -134,8 +156,8 @@ class Parser(object):
 
         if_statement = (Keyword('if').suppress() + (
             Suppress('(') + (assignment | expression) + Suppress(')'))('condition') + Group(
-                statement | (Suppress('{') + statement_list + Suppress('}')))('if_block') + Optional(
-            Keyword('else').suppress() + (statement | (Suppress('{') + statement_list + Suppress('}'))))('else_block'))\
+            statement | (Suppress('{') + statement_list + Suppress('}')))('if_block') + Optional(
+            Keyword('else').suppress() + (statement | (Suppress('{') + statement_list + Suppress('}'))))('else_block')) \
             .setParseAction(self.if_action)
 
         while_statement = Keyword('while') + Suppress('(') + (
