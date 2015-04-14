@@ -2,18 +2,16 @@ from pyparsing import *
 
 
 class Node(object):
-    def __init__(self):
+    def __init__(self, ttype="", value=None):
         self.child_nodes = []
-        self.parent_node = None
-        self.type = ""
-        self.value = None
+        self.type = ttype
+        self.value = value
         self.has_block = False
 
     def __str__(self):
-        ret = "%s\n%s\n" % (self.type, str(self.value))
+        ret = "%s %s\n" % (self.type, str(self.value))
 
-        for node in self.child_nodes:
-            ret += str(node) + '\n'
+        ret += ''.join(map(str, self.child_nodes))
 
         return ret
 
@@ -30,9 +28,20 @@ class IfNode(ConditionalNode):
     def __init__(self):
         super(IfNode, self).__init__()
 
-        self.else_node = None
+        self.else_nodes = None
         self.has_block = True
         self.type = 'if'
+
+    def __str__(self):
+        ret = "%s %s" % (self.type, str(self.conditional_expression))
+
+        ret += ''.join(map(str, self.child_nodes))
+
+        if len(self.else_nodes):
+            ret += "else\n"
+            ret += ''.join(map(str, self.else_nodes))
+
+        return ret
 
 
 class Function(object):
@@ -43,7 +52,7 @@ class Function(object):
         self.root_node.type = 'root'
 
     def __str__(self):
-        return "%s\n%s\n%s" % (self.name, str(self.params), str(self.root_node))
+        return "%s %s\n%s" % (self.name, str(self.params), str(self.root_node))
 
 
 class CodeTree(object):
@@ -55,21 +64,6 @@ class CodeTree(object):
 
     def add_function(self, function):
         self.functions.append(function)
-        self.current_node = function.root_node
-
-    def close_node(self):
-        self.current_node = self.current_node.parent_node
-
-    def add_node(self, node):
-        if self.current_node.type == 'if':
-            self.current_node.conditional_expression = node
-            return
-
-        self.current_node.child_nodes.append(node)
-        node.parent_node = self.current_node
-
-        if node.has_block:
-            self.current_node = node
 
     def __str__(self):
         ret = ''
@@ -80,13 +74,19 @@ class CodeTree(object):
         return ret
 
 
+class SymbolicTable(object):
+    pass
+
+
 class Parser(object):
     def __init__(self, debug=False):
         self.code = CodeTree()
+        self.sym = SymbolicTable()
+
         self.debug = debug
 
         identifier = Word(alphas + "_", alphanums + "_")
-        integer = Word(nums)
+        integer = Word(nums).setParseAction(lambda x: int((x[0])))
         char = Literal("'").suppress() + Word(alphanums, exact=1) + Literal("'").suppress()
         constant = (char | integer)
         lpar = Literal('(').suppress()
@@ -100,138 +100,167 @@ class Parser(object):
         statement = Forward()
         statement_list = Forward()
 
-        arguments = delimitedList(expression('exp'))
-        function_call = ((identifier('name') + FollowedBy('(')) + lpar + Optional(arguments)('args') + rpar)
+        arguments = delimitedList(expression)
+        function_call = (
+        (identifier('name') + FollowedBy('(')) + lpar + Optional(arguments)('args') + rpar).setParseAction(
+            self.function_call_action)
 
         precendence = [
             (multop, 2, opAssoc.LEFT),
             (plusop, 2, opAssoc.LEFT),
             (logical_binary_operators, 2, opAssoc.LEFT)
         ]
-        expression << (operatorPrecedence(function_call | constant | identifier, precendence)) \
-            .setParseAction(self.expression)
 
-        assignment = (identifier + Word('=').suppress() + expression('value')).setParseAction(self.assignment)
+        # FIXME: right now function calls are not allowed
+        expression << (operatorPrecedence(function_call | constant | identifier, precendence)).setParseAction(
+            self.expression_action)
+
+        assignment = Forward()
+        assignment << (identifier + Word('=').suppress() + (expression | assignment)('value')).setParseAction(self.assignment_action)
 
         # statements
-        return_statement = Keyword('return') + expression + Suppress(';')
+        return_statement = (Keyword('return').suppress() + expression + Suppress(';')).setParseAction(
+            self.return_action)
         external_statement = (Keyword('extrn').suppress() + identifier('name') + Suppress(';')).setParseAction(
-            self.external)
+            self.external_action)
 
-        auto_atom = identifier + Optional(constant)
-        declaration_statement = Keyword('auto') + auto_atom + ZeroOrMore(
-            Literal(',') + auto_atom) + Suppress(';')
+        auto_atom = (identifier('name') + Optional(constant)('value')).setParseAction(self.auto_atom_action)
+        declaration_statement = (Keyword('auto').suppress() + auto_atom + ZeroOrMore(
+            Literal(',').suppress() + auto_atom) + Suppress(';')).setParseAction(self.auto_action)
 
         # FIXME: In B, like in C, an assignment is also an expression as it is allowed inside the if/while or even in another assignment
         assignment_statement = assignment + Suppress(';')
         function_call_statement = function_call + Suppress(';')
 
-        if_statement = Keyword('if').setParseAction(self.begin_if) + (
-            Suppress('(') + (assignment | expression) + Suppress(')')) + Empty().setParseAction(self.if_block) + (
-            statement | (Suppress('{') + statement_list + Suppress('}'))) + Empty().setParseAction(
-            self.finish_block) + Optional(
-            Keyword('else') + (statement | (Suppress('{') + statement_list + Suppress('}')))) \
-                           .setParseAction(self.finish_block)
+        if_statement = (Keyword('if').suppress() + (
+            Suppress('(') + (assignment | expression) + Suppress(')'))('condition') + Group(
+                statement | (Suppress('{') + statement_list + Suppress('}')))('if_block') + Optional(
+            Keyword('else').suppress() + (statement | (Suppress('{') + statement_list + Suppress('}'))))('else_block'))\
+            .setParseAction(self.if_action)
 
-        while_statement = Keyword('while').setParseAction(self.begin_while) + Suppress('(') + (
-            assignment | expression) + Suppress(')') + Empty().setParseAction(self.while_block) + (
-                              statement | Suppress('{') + statement_list + Suppress('}')) + Empty().setParseAction(
-            self.finish_block)
+        while_statement = Keyword('while') + Suppress('(') + (
+            assignment | expression) + Suppress(')') + (
+                              statement | Suppress('{') + statement_list + Suppress('}'))
 
         statement << (
+            if_statement |
             declaration_statement |
             return_statement |
             external_statement |
             assignment_statement |
             function_call_statement |
-            if_statement |
             while_statement
         )
         statement_list << OneOrMore(statement)
 
         parameter_list = delimitedList(identifier)
         function_body = Suppress('{') + statement_list + Suppress('}')
-        function = (identifier('name') + Group(Suppress('(') + Optional(parameter_list) + Suppress(
-            ')'))('params')).setParseAction(self.begin_function) + function_body + Empty().setParseAction(
-            self.finish_block)
+        function = ((identifier('function_name') + Group(Suppress('(') + Optional(parameter_list) + Suppress(
+            ')'))('params')) + function_body).setParseAction(self.function_action)
 
         global_declaration = identifier + constant + Suppress(';')
 
         self.program = OneOrMore(function | global_declaration)
 
-    def external(self, value):
-        if self.debug:
-            print 'extern'
-            print value.name
-
-        node = Node()
-        node.value = value.name
-        node.type = 'extern'
-
-        self.code.add_node(node)
-
-    def expression(self, value):
-        if self.debug:
-            print 'expression'
-            print value
-
-        node = Node()
-        node.value = value
-        node.type = 'expr'
-
-        self.code.add_node(node)
-
-    def assignment(self, value):
-        if self.debug:
-            print 'assignment'
-            print value
-
-        node = Node()
-        node.value = value
-        node.type = 'assign'
-
-        self.code.add_node(node)
-
-    def begin_if(self, value):
-        if self.debug:
-            print 'if'
-
-        self.code.add_node(IfNode())
-
-    def if_block(self, value):
-        pass
-
-    def begin_while(self, value):
-        pass
-
-    def while_block(self, value):
-        pass
-
-    def else_block(self, value):
-        pass
-
-    def begin_function(self, function):
-        self.code.add_function(Function(function.name, function.params))
-
-    def finish_block(self, value):
-        pass
-
     def parse_string(self, string):
         return self.program.ignore(cStyleComment).parseString(string)
 
+    def assignment_action(self, assignment):
+        if self.debug:
+            pass
+
+        node = Node()
+        node.type = 'assign'
+        node.value = assignment[0]
+        node.child_nodes.append(assignment[1])
+
+        return node
+
+    def if_action(self, if_content):
+        if self.debug:
+            pass
+
+        node = IfNode()
+        node.conditional_expression = if_content[0]
+        node.child_nodes = list(if_content.if_block)
+        node.else_nodes = list(if_content.else_block)
+
+        return node
+
+    def expression_action(self, value):
+        if self.debug:
+            pass
+
+        node = Node()
+        node.type = 'expr'
+        node.value = value
+
+        return node
+
+    def function_action(self, f):
+        if self.debug:
+            print 'function'
+
+        func = Function(f.function_name, f.params)
+        func.root_node.child_nodes = f[2:]
+
+        return func
+
+    def return_action(self, value):
+        if self.debug:
+            pass
+
+        node = Node('return')
+        node.child_nodes = value
+
+        return node
+
+    def function_call_action(self, value):
+        if self.debug:
+            pass
+
+        node = Node('funcall', value.name)
+        node.child_nodes.append(value[1])
+
+        return node
+
+    def external_action(self, value):
+        if self.debug:
+            pass
+
+        return Node('ext', value.name)
+
+    def auto_action(self, value):
+        if self.debug:
+            pass
+
+        node = Node('decl')
+        node.child_nodes = value
+
+        return node
+
+    def auto_atom_action(self, value):
+        if self.debug:
+            pass
+
+        node = Node('autopair', value.name)
+        node.child_nodes = [value.value]
+
+        return node
+
 
 if __name__ == '__main__':
-    parser = Parser(debug=True)
+    parser = Parser(debug=False)
 
     program = """
     /* The following function will print a non-negative number, n, to
-  the base b, where 2<=b<=10,  This routine uses the fact that
-  in the ANSCII character set, the digits O to 9 have sequential
-  code values.  */
+    the base b, where 2<=b<=10,  This routine uses the fact that
+    in the ANSCII character set, the digits O to 9 have sequential
+    code values.  */
 
     printn(n,b) {
         extrn putchar;
-        auto a;
+        auto a 12, b;
 
         if(a=n/b) { /* assignment, not test for equality */
             printn(a, b); /* recursive */
@@ -239,8 +268,15 @@ if __name__ == '__main__':
         putchar(n%b + '0');
 
     }
+
+    main() {
+        auto a;
+        printn(2,10);
+        return 0;
+    }
     """
 
-    print parser.parse_string(program)
-    print
-    print parser.code
+    # print parser.parse_string(program)
+
+    for function in parser.parse_string(program):
+        print function
