@@ -66,6 +66,7 @@ class IfNode(ConditionalNode):
 
 
 class Function(object):
+    # TODO: There should be reference to the sym table so it is possible to distinguish between local and global scope
     def __init__(self, name, params):
         self.name = name
         self.params = params
@@ -122,8 +123,7 @@ class Parser(object):
         statement_list = Forward()
 
         arguments = delimitedList(expression)
-        function_call = (
-            (identifier('name') + FollowedBy('(')) + lpar + Optional(arguments)('args') + rpar).setParseAction(
+        function_call = (identifier('name') + lpar + Optional(arguments)('args') + rpar).setParseAction(
             self.function_call_action)
 
         precendence = [
@@ -137,23 +137,25 @@ class Parser(object):
             self.expression_action)
 
         assignment = Forward()
-        assignment << (identifier + Word('=').suppress() + (expression | assignment)('value')).setParseAction(
-            self.assignment_action)
+        assignment << (identifier + Word('=').suppress() + (expression | assignment)('value'))\
+            .setParseAction(self.assignment_action)
 
         # statements
-        return_statement = (Keyword('return').suppress() + expression + Suppress(';')).setParseAction(
-            self.return_action)
-        external_statement = (Keyword('extrn').suppress() + identifier('name') + Suppress(';')).setParseAction(
-            self.external_action)
+        return_statement = (Keyword('return').suppress() + expression + Suppress(';'))\
+            .setParseAction(self.return_action)
+
+        external_statement = (Keyword('extrn').suppress() + identifier('name') + Suppress(';'))\
+            .setParseAction(self.external_action)
 
         auto_atom = (identifier('name') + Optional(constant)('value')).setParseAction(self.auto_atom_action)
-        declaration_statement = (Keyword('auto').suppress() + auto_atom + ZeroOrMore(
-            Literal(',').suppress() + auto_atom) + Suppress(';')).setParseAction(self.auto_action)
+        declaration_statement = (Keyword('auto').suppress() + auto_atom +
+            ZeroOrMore(Literal(',').suppress() + auto_atom) + Suppress(';')).setParseAction(self.auto_action)
 
         # FIXME: In B, like in C, an assignment is also an expression as it is allowed inside the if/while or even in another assignment
         assignment_statement = assignment + Suppress(';')
         function_call_statement = function_call + Suppress(';')
 
+        # FIXME: no empty blocks right now
         if_statement = (Keyword('if').suppress() + (
             Suppress('(') + (assignment | expression) + Suppress(')'))('condition') + Group(
             statement | (Suppress('{') + statement_list + Suppress('}')))('if_block') + Optional(
@@ -161,8 +163,7 @@ class Parser(object):
             .setParseAction(self.if_action)
 
         while_statement = Keyword('while') + Suppress('(') + (
-            assignment | expression) + Suppress(')') + (
-                              statement | Suppress('{') + statement_list + Suppress('}'))
+            assignment | expression) + Suppress(')') + (statement | Suppress('{') + statement_list + Suppress('}'))
 
         statement << (
             if_statement |
