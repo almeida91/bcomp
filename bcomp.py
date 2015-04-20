@@ -174,7 +174,7 @@ class Parser(object):
             function_call_statement |
             while_statement
         )
-        statement_list << OneOrMore(statement)
+        statement_list << ZeroOrMore(statement)
 
         parameter_list = delimitedList(identifier)
         function_body = Suppress('{') + statement_list + Suppress('}')
@@ -243,7 +243,7 @@ class Parser(object):
             pass
 
         node = Node('funcall', value.name)
-        node.child_nodes.append(value[1])
+        node.child_nodes = list(value[1:])
 
         return node
 
@@ -288,6 +288,10 @@ if __name__ == '__main__':
         if(a=n/b) { /* assignment, not test for equality */
             printn(a, b); /* recursive */
         }
+        else {
+
+        }
+
         putchar(n%b + '0');
 
     }
