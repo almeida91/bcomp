@@ -155,7 +155,6 @@ class Parser(object):
         assignment_statement = assignment + Suppress(';')
         function_call_statement = function_call + Suppress(';')
 
-        # FIXME: no empty blocks right now
         if_statement = (Keyword('if').suppress() + (
             Suppress('(') + (assignment | expression) + Suppress(')'))('condition') + Group(
             statement | (Suppress('{') + statement_list + Suppress('}')))('if_block') + Optional(
@@ -165,6 +164,12 @@ class Parser(object):
         while_statement = Keyword('while') + Suppress('(') + (
             assignment | expression) + Suppress(')') + (statement | Suppress('{') + statement_list + Suppress('}'))
 
+        case_statement = Keyword('case') + (integer | char) + Suppress(':') + statement_list
+
+        switch_statement = Keyword('switch') + (assignment | expression) + (Suppress('{') + ZeroOrMore(case_statement) + Suppress('}'))
+
+        label_statement = identifier + Suppress(':')
+
         statement << (
             if_statement |
             declaration_statement |
@@ -172,7 +177,8 @@ class Parser(object):
             external_statement |
             assignment_statement |
             function_call_statement |
-            while_statement
+            while_statement |
+            switch_statement
         )
         statement_list << ZeroOrMore(statement)
 
@@ -293,7 +299,7 @@ if __name__ == '__main__':
         }
 
         putchar(n%b + '0');
-
+s
     }
 
     main() {
