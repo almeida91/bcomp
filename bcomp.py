@@ -26,8 +26,10 @@ class Node(object):
     def __init__(self, ttype="", value=None):
         self.child_nodes = []
         self.type = ttype
-        self.value = value
         self.has_block = False
+        self.value = None
+
+        self.format_value(value)
 
     def __str__(self):
         ret = "%s %s\n" % (self.type, str(self.value))
@@ -35,6 +37,13 @@ class Node(object):
         ret += ''.join(map(str, self.child_nodes))
 
         return ret
+
+    def format_value(self, value):
+        self.value = value
+
+
+class ExpressionNode(Node):
+    pass
 
 
 class ConditionalNode(Node):
@@ -132,7 +141,8 @@ class Parser(object):
             (logical_binary_operators, 2, opAssoc.LEFT)
         ]
 
-        # FIXME: right now function calls are not allowed
+        inc_expr = ((identifier + inc_op) | (inc_op + identifier))
+
         expression << (operatorPrecedence(function_call | constant | identifier, precendence)).setParseAction(
             self.expression_action)
 
@@ -220,15 +230,13 @@ class Parser(object):
         if self.debug:
             pass
 
-        node = Node()
-        node.type = 'expr'
-        node.value = value
+        node = ExpressionNode('expr', value[0])
 
         return node
 
     def function_action(self, f):
         if self.debug:
-            print 'function'
+            pass
 
         func = Function(f.function_name, f.params)
         func.root_node.child_nodes = f[2:]
@@ -239,8 +247,7 @@ class Parser(object):
         if self.debug:
             pass
 
-        node = Node('return')
-        node.child_nodes = value
+        node = Node('return', value[0])
 
         return node
 
@@ -299,7 +306,6 @@ if __name__ == '__main__':
         }
 
         putchar(n%b + '0');
-s
     }
 
     main() {
