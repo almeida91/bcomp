@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 __author__ = 'igor'
 
 from pyparsing import *
@@ -6,7 +8,63 @@ from pyparsing import *
 keywords = []
 
 
+class SymbolNotFoundException(ParseBaseException):
+    pass
+
+
+class SymbolTable(object):
+    def __init__(self, global_symbols):
+        self.global_scope = Scope()
+        self.global_scope.items = global_symbols
+        self.current_scope = self.global_scope
+
+    def add_function(self, name):
+        self._add(Scope(name))
+
+    def begin_scope(self):
+        self._add(Scope())
+
+    def close_scope(self):
+        self.current_scope = self.current_scope.parent
+
+    def _add(self, scope):
+        scope.parent = self.current_scope
+        self.current_scope.children.append(scope)
+        self.current_scope = scope
+
+    def in_scope(self, symbol):
+        return symbol in self.current_scope
+
+
+class Code(object):
+    def __init__(self):
+        self.functions = []
+        self.declarations = []
+
+        self.current_block = None
+
+    def validate(self, sym_table):
+        for function in self.functions:
+            function.validate(sym_table)
+
+
+class Scope(object):
+    def __init__(self, name=''):
+        self.parent = None
+        self.children = []
+        self.items = []
+        self.name = name
+
+    def __contains__(self, item):
+        if self.parent:
+            return item in self.items or item in self.parent
+        else:
+            return item in self.items
+
 class ParserKeyword(Keyword):
+    """
+    A little workaround so the identifier function can ignore keywords
+    """
     def __init__(self, matchString):
         super(ParserKeyword, self).__init__(matchString)
         keywords.append(matchString)
@@ -21,6 +79,16 @@ class Node(object):
 
     def __getitem__(self, item):
         return self
+
+    def validate(self, sym_table):
+        pass
+
+
+class LiteralNode(Node):
+    def __init__(self, loc, value, ttype):
+        super(LiteralNode, self).__init__(loc)
+        self.value = value
+        self.type = ttype
 
 
 class IdentifierNode(Node):
@@ -41,6 +109,10 @@ class DeclarationNode(Node):
 
     def __str__(self):
         return str(self.variables)
+
+    def validate(self, sym_table):
+        # print 'oi'
+        pass
 
 
 class FunctionCallNode(Node):
@@ -66,6 +138,11 @@ class FunctionCallNode(Node):
 
         return s + ')'
 
+    def validate(self, sym_table):
+        print 'oi'
+        # if not sym_table.in_scope(self.name):
+        #     raise SymbolNotFoundException("Function %s not found" % self.name, self.loc)
+
 
 class ExpressionNode(Node):
     def __init__(self, loc):
@@ -77,9 +154,17 @@ class ExpressionNode(Node):
 
     @property
     def single(self):
+        """
+        :return: True if only a single number or variable is hold
+        """
         return not self.operator and not self.right
 
     def convert(self, value):
+        """
+        Converts a ParseResults object into a valid ExpressionNode-based tree, which can be later used by the compiler
+
+        :param value:
+        """
         # FIXME: this won't work for unary operators
         if type(value) == ParseResults and len(value) != 3:
             value = value[0]
@@ -125,6 +210,10 @@ class IfNode(Node):
         self.block = None
         self.else_block = None
 
+    def validate(self, sym_table):
+        for statement in self.block + self.else_block:
+            statement.validate(sym_table)
+
 
 class WhileNode(Node):
     def __init__(self, loc):
@@ -133,12 +222,20 @@ class WhileNode(Node):
         self.expression = None
         self.block = None
 
+    def validate(self, sym_table):
+        for statement in self.block:
+            statement.validate(sym_table)
+
 
 class Function(object):
     def __init__(self, name, params):
         self.name = name
         self.params = params
         self.statements = []
+
+    def validate(self, sym_table):
+        for statement in self.statements:
+            statement.validate(sym_table)
 
 
 class Parser(object):
@@ -170,10 +267,14 @@ class Parser(object):
         f = Function(value.name, list(value.params))
         f.statements = list(value[2:])
 
+        self.sym_table.add_function(f.name)
+        self.code.functions.append(f)
+
         return f
 
     def extern(self, loc, value):
-        return ExternNode(loc, value[0])
+        node = ExternNode(loc, value[0])
+        return node
 
     def if_(self, loc, value):
         node = IfNode(loc)
@@ -194,28 +295,45 @@ class Parser(object):
         node = DeclarationNode(loc)
         node.variables = [(value.id, value.value)]
 
+        self.code.declarations.append(node)
+
         return node
 
     def identifier(self, loc, value):
+
         # TODO: sym table checking, etc
         if value.name in keywords or not value.name:
             return value
         else:
-            return IdentifierNode(loc, value.name)
+            return IdentifierNode(loc, str(value.name))
+
+    def block(self, loc, value):
+        return list(value)
+
+    def integer(self, loc, value):
+        return LiteralNode(loc, value, 'integer')
+
+    def char(self, loc, value):
+        return LiteralNode(loc, value, 'char')
 
     def __init__(self):
-        identifier = Word(alphas + "_", alphanums + "_")('name').setParseAction(self.identifier)
-        integer = Word(nums).setParseAction(int)
-        char = Literal("'").suppress() + Word(alphanums, exact=1) + Literal("'").suppress()
-        constant = (char | integer)
+        self.sym_table = SymbolTable([])
+        self.code = Code()
+
+        identifier = Forward()
+        integer = Word(nums).setParseAction(self.integer)
+        char = (Literal("'").suppress() + Word(alphanums, exact=1) + Literal("'").suppress()).setParseAction(self.char)
+        literal = (char | integer)
         plusop = oneOf('+ -')
         multop = oneOf('/ * %')
         logical_binary_operators = oneOf('& | ^')
         inc_op = Word('+', exact=2) | Word('-', exact=2)
 
-        extern_statement = (ParserKeyword('extrn').suppress() + identifier + Suppress(';')).setParseAction(self.extern)
+        # TODO: strings
 
-        auto_atom = (identifier + Optional(constant)).setParseAction(self.auto)
+        external_statement = (ParserKeyword('extrn').suppress() + identifier + Suppress(';')).setParseAction(self.extern)
+
+        auto_atom = (identifier + Optional(literal)).setParseAction(self.auto)
         declaration_statement = (
             ParserKeyword('auto').suppress() + auto_atom + ZeroOrMore(Literal(',').suppress() + auto_atom)
             + Suppress(';')
@@ -237,7 +355,7 @@ class Parser(object):
 
         assignment = identifier + Word('=') + expression
 
-        expression << operatorPrecedence(function_call | assignment | identifier | constant, precendence)('expr')\
+        expression << operatorPrecedence(function_call | assignment | identifier | literal, precendence)('expr')\
             .setParseAction(self.expression)
 
         expression_statement = expression + Suppress(';')
@@ -259,14 +377,14 @@ class Parser(object):
         statement << (
             expression_statement |
             declaration_statement |
-            extern_statement |
+            external_statement |
             if_statement |
             while_statement |
             empty_statement
         )
 
         statement_list = ZeroOrMore(statement)
-        block << (Suppress('{') + statement_list + Suppress('}')).setParseAction(list)
+        block << (Suppress('{') + statement_list + Suppress('}')).setParseAction(self.block)
 
         parameter_list = delimitedList(identifier).setParseAction(list)
 
@@ -274,13 +392,19 @@ class Parser(object):
             identifier('name') + Group(Suppress('(') + Optional(parameter_list) + Suppress(')'))('params') + block
         ).setParseAction(self.func)
 
-        global_declaration = (identifier('id') + constant('value') + Suppress(';'))\
+        global_declaration = (identifier('id') + literal('value') + Suppress(';'))\
             .setParseAction(self.global_declaration)
 
         self.program = ZeroOrMore(global_declaration | function)
 
+        identifier << (~MatchFirst(map(Keyword, keywords)) + Word(alphas + "_", alphanums + "_")('name'))\
+            .setParseAction(self.identifier)
+
     def parse(self, code):
-        return list(self.program.ignore(cStyleComment).parseString(code))
+        return list(self.program.ignore(cStyleComment).parseString(code, parseAll=True))
+
+    def validate(self):
+        self.code.validate(self.sym_table)
 
 
 if __name__ == '__main__':
@@ -291,7 +415,7 @@ if __name__ == '__main__':
             extrn putchar;
             auto a;
 
-            if(a=n/b) { /* assignment, not test for equality */
+            if (a=n/b) { /* assignment, not test for equality */
                 printn(a, b); /* recursive */
             }
             else {
@@ -302,7 +426,8 @@ if __name__ == '__main__':
             putchar(n%b + '0');
         }
 
-        a 12;
     """)
+
+    p.validate()
 
     print code
