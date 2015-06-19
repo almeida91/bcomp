@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from pyparsing import ParseBaseException
 
 __author__ = 'igor'
 
@@ -6,10 +7,6 @@ from pyparsing import *
 
 
 keywords = []
-
-
-class SymbolNotFoundException(ParseBaseException):
-    pass
 
 
 class SymbolTable(object):
@@ -170,7 +167,7 @@ class FunctionCallNode(Node):
 
     def validate(self, sym_table):
         if not sym_table.in_scope(self.name):
-            raise SymbolNotFoundException("Function %s not found" % self.name, self.loc)
+            raise ParseBaseException("Function %s not found" % self.name, self.loc)
 
 
 class ExpressionNode(Node):
