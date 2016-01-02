@@ -1,14 +1,12 @@
 #!/usr/bin/env python
+from pyparsing import ParseBaseException
 
 __author__ = 'igor'
 
 from pyparsing import *
 
+
 keywords = []
-
-
-class SymbolNotFoundException(ParseBaseException):
-    pass
 
 
 class SymbolTable(object):
@@ -18,10 +16,16 @@ class SymbolTable(object):
         self.current_scope = self.global_scope
 
     def add_function(self, name):
+        self.global_scope.items.append(name)
         self._add(Scope(name))
 
-    def begin_scope(self):
-        self._add(Scope())
+    def begin_scope(self, name=''):
+        if name:
+            self.current_scope = next((scope for scope in self.global_scope.children if scope.name == name), None)
+            if not self.current_scope:
+                raise ParseBaseException("Unknown scope %s" % name)
+        else:
+            self._add(Scope())
 
     def close_scope(self):
         self.current_scope = self.current_scope.parent
@@ -60,12 +64,14 @@ class Scope(object):
         else:
             return item in self.items
 
+    def __str__(self):
+        return str(self.name)
+
 
 class ParserKeyword(Keyword):
     """
     A little workaround so the identifier function can ignore keywords
     """
-
     def __init__(self, matchString):
         super(ParserKeyword, self).__init__(matchString)
         keywords.append(matchString)
@@ -75,14 +81,18 @@ class Node(object):
     def __init__(self, loc):
         self.loc = loc
 
-    def __len__(self):
-        return 1
-
-    def __getitem__(self, item):
-        return self
-
     def validate(self, sym_table):
+        """
+
+        :param sym_table:SymbolTable
+        :return:
+        """
         pass
+
+    def __add__(self, other):
+        if type(other) is list:
+            return [self] + other
+        return self + other
 
 
 class LiteralNode(Node):
@@ -90,9 +100,6 @@ class LiteralNode(Node):
         super(LiteralNode, self).__init__(loc)
         self.value = value
         self.type = ttype
-
-    def __str__(self):
-        return self.value
 
 
 class IdentifierNode(Node):
@@ -103,6 +110,18 @@ class IdentifierNode(Node):
 
     def __str__(self):
         return self.name
+
+    def __eq__(self, other):
+        if type(other) is IdentifierNode:
+            return other.name == self.name
+        elif type(other) is str:
+            return self.name == other
+
+        return self == other
+
+    def validate(self, sym_table):
+        if self.name not in sym_table.current_scope:
+            raise ParseBaseException('Symbol "%s" not declared in current scope' % self.name, self.loc)
 
 
 class DeclarationNode(Node):
@@ -115,8 +134,12 @@ class DeclarationNode(Node):
         return str(self.variables)
 
     def validate(self, sym_table):
-        # print 'oi'
-        pass
+        # TODO: maybe set the value as well?
+
+        for var, val in self.variables:
+            if var in sym_table.current_scope:
+                raise ParseBaseException('Symbol "%s" already declared' % var, self.loc)
+            sym_table.current_scope.items.append(var)
 
 
 class FunctionCallNode(Node):
@@ -143,9 +166,8 @@ class FunctionCallNode(Node):
         return s + ')'
 
     def validate(self, sym_table):
-        print 'oi'
-        # if not sym_table.in_scope(self.name):
-        #     raise SymbolNotFoundException("Function %s not found" % self.name, self.loc)
+        if not sym_table.in_scope(self.name):
+            raise ParseBaseException("Function %s not found" % self.name, self.loc)
 
 
 class ExpressionNode(Node):
@@ -173,10 +195,10 @@ class ExpressionNode(Node):
         if type(value) == ParseResults and len(value) != 3:
             value = value[0]
 
-        size = len(value)
+        size = len(value) if not isinstance(value, Node) else 1
 
         if size == 1:
-            self.left = value[0]
+            self.left = value[0] if not isinstance(value, Node) else value
         elif size >= 3:
             self.left = ExpressionNode(self.loc)
             self.left.convert(value[0])
@@ -195,6 +217,11 @@ class ExpressionNode(Node):
             return str(self.left)
         return "%s %s %s" % (self.left, self.operator, str(self.right))
 
+    def validate(self, sym_table):
+        self.left.validate(sym_table)
+        if not self.single:
+            self.right.validate(sym_table)
+
 
 class ExternNode(Node):
     def __init__(self, loc, identifier):
@@ -204,6 +231,11 @@ class ExternNode(Node):
 
     def __str__(self):
         return self.identifier
+
+    def validate(self, sym_table):
+        if self.identifier in sym_table.current_scope:
+            raise ParseBaseException('Symbol "%s" already declared' % self.identifier, self.loc)
+        sym_table.current_scope.items.append(self.identifier)
 
 
 class IfNode(Node):
@@ -215,11 +247,23 @@ class IfNode(Node):
         self.else_block = None
 
     def validate(self, sym_table):
-        if type(self.block) == Node:
+        if not isinstance(self.block, list):
             self.block = [self.block]
 
-        for statement in self.block + self.else_block:
+        self.expression.validate(sym_table)
+
+        sym_table.begin_scope()
+
+        for statement in self.block:
             statement.validate(sym_table)
+
+        sym_table.close_scope()
+        sym_table.begin_scope()
+
+        for statement in self.else_block:
+            statement.validate(sym_table)
+
+        sym_table.close_scope()
 
 
 class WhileNode(Node):
@@ -230,8 +274,18 @@ class WhileNode(Node):
         self.block = None
 
     def validate(self, sym_table):
+        if not isinstance(self.block, list):
+            self.block = [self.block]
+
+        if isinstance(self.block, Node):
+            self.block = [self.block]
+
+        sym_table.begin_scope()
+
         for statement in self.block:
             statement.validate(sym_table)
+
+        sym_table.close_scope()
 
 
 class Function(object):
@@ -241,8 +295,15 @@ class Function(object):
         self.statements = []
 
     def validate(self, sym_table):
+        sym_table.begin_scope(self.name)
+
+        for param in self.params:
+            sym_table.current_scope.items.append(param)
+
         for statement in self.statements:
             statement.validate(sym_table)
+
+        sym_table.close_scope()
 
 
 class Parser(object):
@@ -338,13 +399,13 @@ class Parser(object):
 
         # TODO: strings
 
-        external_statement = (ParserKeyword('extrn').suppress() + identifier + Suppress(';')).setParseAction(
-                self.extern)
+        external_statement = (ParserKeyword('extrn').suppress() + identifier + Suppress(';'))\
+            .setParseAction(self.extern)
 
         auto_atom = (identifier + Optional(literal)).setParseAction(self.auto)
         declaration_statement = (
-            ParserKeyword('auto').suppress() + auto_atom + ZeroOrMore(Literal(',').suppress() + auto_atom) + Suppress(
-                ';')
+            ParserKeyword('auto').suppress() + auto_atom + ZeroOrMore(Literal(',').suppress() + auto_atom)
+            + Suppress(';')
         ).setParseAction(self.declaration)
 
         precendence = [
@@ -358,12 +419,12 @@ class Parser(object):
         block = Forward()
 
         arguments = delimitedList(expression)
-        function_call = (identifier('func') + Suppress('(') + arguments('args') + Suppress(')')) \
+        function_call = (identifier('func') + Suppress('(') + arguments('args') + Suppress(')'))\
             .setParseAction(self.funcall)
 
         assignment = identifier + Word('=') + expression
 
-        expression << operatorPrecedence(function_call | assignment | identifier | literal, precendence)('expr') \
+        expression << operatorPrecedence(function_call | assignment | identifier | literal, precendence)('expr')\
             .setParseAction(self.expression)
 
         expression_statement = expression + Suppress(';')
@@ -400,16 +461,16 @@ class Parser(object):
             identifier('name') + Group(Suppress('(') + Optional(parameter_list) + Suppress(')'))('params') + block
         ).setParseAction(self.func)
 
-        global_declaration = (identifier('id') + literal('value') + Suppress(';')) \
+        global_declaration = (identifier('id') + literal('value') + Suppress(';'))\
             .setParseAction(self.global_declaration)
 
         self.program = ZeroOrMore(global_declaration | function)
 
-        identifier << (~MatchFirst(map(Keyword, keywords)) + Word(alphas + "_", alphanums + "_")('name')) \
+        identifier << (~MatchFirst(map(Keyword, keywords)) + Word(alphas + "_", alphanums + "_")('name'))\
             .setParseAction(self.identifier)
 
-    def parse(self, code):
-        return list(self.program.ignore(cStyleComment).parseString(code, parseAll=True))
+    def parse(self, source_code):
+        return list(self.program.ignore(cStyleComment).parseString(source_code, parseAll=True))
 
     def validate(self):
         self.code.validate(self.sym_table)
@@ -425,17 +486,12 @@ if __name__ == '__main__':
 
             if (a=n/b) { /* assignment, not test for equality */
                 printn(a, b); /* recursive */
-                /*f();*/
-                a = 2;
             }
             else {
                 while (a) {
-                    a = c;
+                    a = b;
                 }
             }
-
-            b= 4;
-
             putchar(n%b + '0');
         }
 
