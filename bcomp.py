@@ -4,7 +4,6 @@ __author__ = 'igor'
 
 from pyparsing import *
 
-
 keywords = []
 
 
@@ -61,10 +60,12 @@ class Scope(object):
         else:
             return item in self.items
 
+
 class ParserKeyword(Keyword):
     """
     A little workaround so the identifier function can ignore keywords
     """
+
     def __init__(self, matchString):
         super(ParserKeyword, self).__init__(matchString)
         keywords.append(matchString)
@@ -89,6 +90,9 @@ class LiteralNode(Node):
         super(LiteralNode, self).__init__(loc)
         self.value = value
         self.type = ttype
+
+    def __str__(self):
+        return self.value
 
 
 class IdentifierNode(Node):
@@ -211,6 +215,9 @@ class IfNode(Node):
         self.else_block = None
 
     def validate(self, sym_table):
+        if type(self.block) == Node:
+            self.block = [self.block]
+
         for statement in self.block + self.else_block:
             statement.validate(sym_table)
 
@@ -331,12 +338,13 @@ class Parser(object):
 
         # TODO: strings
 
-        external_statement = (ParserKeyword('extrn').suppress() + identifier + Suppress(';')).setParseAction(self.extern)
+        external_statement = (ParserKeyword('extrn').suppress() + identifier + Suppress(';')).setParseAction(
+                self.extern)
 
         auto_atom = (identifier + Optional(literal)).setParseAction(self.auto)
         declaration_statement = (
-            ParserKeyword('auto').suppress() + auto_atom + ZeroOrMore(Literal(',').suppress() + auto_atom)
-            + Suppress(';')
+            ParserKeyword('auto').suppress() + auto_atom + ZeroOrMore(Literal(',').suppress() + auto_atom) + Suppress(
+                ';')
         ).setParseAction(self.declaration)
 
         precendence = [
@@ -350,12 +358,12 @@ class Parser(object):
         block = Forward()
 
         arguments = delimitedList(expression)
-        function_call = (identifier('func') + Suppress('(') + arguments('args') + Suppress(')'))\
+        function_call = (identifier('func') + Suppress('(') + arguments('args') + Suppress(')')) \
             .setParseAction(self.funcall)
 
         assignment = identifier + Word('=') + expression
 
-        expression << operatorPrecedence(function_call | assignment | identifier | literal, precendence)('expr')\
+        expression << operatorPrecedence(function_call | assignment | identifier | literal, precendence)('expr') \
             .setParseAction(self.expression)
 
         expression_statement = expression + Suppress(';')
@@ -392,12 +400,12 @@ class Parser(object):
             identifier('name') + Group(Suppress('(') + Optional(parameter_list) + Suppress(')'))('params') + block
         ).setParseAction(self.func)
 
-        global_declaration = (identifier('id') + literal('value') + Suppress(';'))\
+        global_declaration = (identifier('id') + literal('value') + Suppress(';')) \
             .setParseAction(self.global_declaration)
 
         self.program = ZeroOrMore(global_declaration | function)
 
-        identifier << (~MatchFirst(map(Keyword, keywords)) + Word(alphas + "_", alphanums + "_")('name'))\
+        identifier << (~MatchFirst(map(Keyword, keywords)) + Word(alphas + "_", alphanums + "_")('name')) \
             .setParseAction(self.identifier)
 
     def parse(self, code):
@@ -417,12 +425,17 @@ if __name__ == '__main__':
 
             if (a=n/b) { /* assignment, not test for equality */
                 printn(a, b); /* recursive */
+                /*f();*/
+                a = 2;
             }
             else {
                 while (a) {
                     a = c;
                 }
             }
+
+            b= 4;
+
             putchar(n%b + '0');
         }
 
